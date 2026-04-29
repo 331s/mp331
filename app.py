@@ -1,10 +1,5 @@
 from flask import Flask, render_template, request, send_file, jsonify
-import os
-import tempfile
-import glob
-import base64
-import subprocess
-import sys
+import os, tempfile, glob, base64, subprocess, sys
 
 def get_ffmpeg_path():
     try:
@@ -46,11 +41,8 @@ def version():
 
 @app.route("/cookie-check")
 def cookie_check():
-    b64 = os.environ.get("YT_COOKIES_B64", "")
-    if not b64:
-        return jsonify({"status": "ENV VAR YOK"})
     if not COOKIE_FILE:
-        return jsonify({"status": "DECODE BASARISIZ"})
+        return jsonify({"status": "COOKIE YOK"})
     try:
         with open(COOKIE_FILE, "r") as f:
             lines = f.readlines()
@@ -78,6 +70,8 @@ def download():
     cmd = [
         YTDLP_PATH,
         "--no-playlist",
+        # 2026 SABR fix: web_creator cookie ile PO token gerektirmiyor
+        "--extractor-args", "youtube:player_client=web_creator,tv,mweb",
         "--extract-audio",
         "--audio-format", "mp3",
         "--audio-quality", f"{quality}k",
@@ -96,11 +90,10 @@ def download():
 
     mp3_files = glob.glob(os.path.join(temp_dir, "*.mp3"))
     if not mp3_files:
-        return f"MP3 olusturulamadi. Cikti: {result.stdout[:300]}", 500
+        return f"MP3 olusturulamadi. Cikti: {result.stdout[:500]}", 500
 
     title = os.path.splitext(os.path.basename(mp3_files[0]))[0]
     safe  = "".join(c for c in title if c.isalnum() or c in " _-()[]").strip() or "ses"
-
     return send_file(mp3_files[0], as_attachment=True, download_name=f"{safe}.mp3", mimetype="audio/mpeg")
 
 if __name__ == "__main__":
