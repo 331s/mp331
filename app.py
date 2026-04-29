@@ -54,6 +54,17 @@ def cookie_check():
     except Exception as e:
         return jsonify({"status": f"OKUMA HATASI: {e}"})
 
+@app.route("/version")
+def version():
+    import yt_dlp
+    import subprocess, sys
+    return jsonify({
+        "yt_dlp": yt_dlp.version.__version__,
+        "python": sys.version,
+        "ffmpeg": FFMPEG_PATH,
+        "cookie_loaded": COOKIE_FILE is not None,
+    })
+
 @app.route("/download", methods=["POST"])
 def download():
     url = request.form.get("url", "").strip()
@@ -65,7 +76,6 @@ def download():
 
     temp_dir = tempfile.mkdtemp()
     ydl_opts = {
-        "format": "bv*+ba/b",
         "outtmpl": os.path.join(temp_dir, "%(title)s.%(ext)s"),
         "ffmpeg_location": FFMPEG_PATH,
         "postprocessors": [
