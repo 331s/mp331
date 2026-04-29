@@ -4,6 +4,16 @@ import os
 import tempfile
 import glob
 
+# FFmpeg yolunu belirle: önce sistem, yoksa imageio-ffmpeg
+def get_ffmpeg_path():
+    try:
+        import imageio_ffmpeg
+        return imageio_ffmpeg.get_ffmpeg_exe()
+    except ImportError:
+        return 'ffmpeg'
+
+FFMPEG_PATH = get_ffmpeg_path()
+
 app = Flask(__name__)
 
 @app.route('/')
@@ -15,7 +25,6 @@ def download():
     url = request.form.get('url', '').strip()
     quality = request.form.get('quality', '192')
 
-    # Güvenli kalite doğrulama
     allowed_qualities = {'128', '192', '256', '320'}
     if quality not in allowed_qualities:
         quality = '192'
@@ -27,6 +36,7 @@ def download():
     ydl_opts = {
         'format': 'bestaudio/best',
         'outtmpl': os.path.join(temp_dir, '%(title)s.%(ext)s'),
+        'ffmpeg_location': FFMPEG_PATH,
         'postprocessors': [
             {
                 'key': 'FFmpegExtractAudio',
@@ -38,7 +48,6 @@ def download():
                 'add_metadata': True,
             },
         ],
-        # preferredquality sadece öneri; bitrate'i FFmpeg'e zorla geçiyoruz
         'postprocessor_args': {
             'ffmpegextractaudio': ['-b:a', f'{quality}k'],
         },
@@ -51,7 +60,6 @@ def download():
             info = ydl.extract_info(url, download=True)
             title = info.get('title', 'ses')
 
-        # Find the converted mp3 file
         mp3_files = glob.glob(os.path.join(temp_dir, '*.mp3'))
         if not mp3_files:
             return "MP3 dosyası oluşturulamadı.", 500
@@ -68,9 +76,9 @@ def download():
         )
 
     except yt_dlp.utils.DownloadError as e:
-        return f"İndirme hatası: Video bulunamadı veya erişim kısıtlı.", 400
+        return f"İndirme hatası: {str(e)}", 400
     except Exception as e:
-        return f"Beklenmedik bir hata oluştu: {str(e)}", 500
+        return f"Beklenmedik bir hata: {str(e)}", 500
 
 if __name__ == '__main__':
     app.run(debug=True)
