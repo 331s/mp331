@@ -1,8 +1,9 @@
-from flask import Flask, render_template, request, send_file
+from flask import Flask, render_template, request, send_file, jsonify
 import yt_dlp
 import os
 import tempfile
 import glob
+import base64
 
 def get_ffmpeg_path():
     try:
@@ -12,11 +13,46 @@ def get_ffmpeg_path():
         return "ffmpeg"
 
 FFMPEG_PATH = get_ffmpeg_path()
+
+# Cookie yukle
+COOKIE_FILE = None
+_b64 = os.environ.get("YT_COOKIES_B64", "")
+if _b64:
+    try:
+        _path = os.path.join(tempfile.gettempdir(), "yt_cookies.txt")
+        with open(_path, "wb") as f:
+            f.write(base64.b64decode(_b64))
+        COOKIE_FILE = _path
+    except Exception as e:
+        print(f"Cookie yukleme hatasi: {e}")
+
 app = Flask(__name__)
 
 @app.route("/")
 def index():
     return render_template("index.html")
+
+# Cookie durumunu kontrol et
+@app.route("/cookie-check")
+def cookie_check():
+    b64 = os.environ.get("YT_COOKIES_B64", "")
+    if not b64:
+        return jsonify({"status": "ENV VAR YOK", "cookie_file": None})
+    if not COOKIE_FILE:
+        return jsonify({"status": "DECODE BASARISIZ", "cookie_file": None})
+    try:
+        with open(COOKIE_FILE, "r") as f:
+            lines = f.readlines()
+        return jsonify({
+            "status": "OK",
+            "cookie_file": COOKIE_FILE,
+            "line_count": len(lines),
+            "first_line": lines[0].strip() if lines else "",
+            "has_sid": any("SID" in l for l in lines),
+            "has_sapisid": any("SAPISID" in l for l in lines),
+        })
+    except Exception as e:
+        return jsonify({"status": f"OKUMA HATASI: {e}"})
 
 @app.route("/download", methods=["POST"])
 def download():
@@ -40,6 +76,8 @@ def download():
         "no_warnings": True,
         "noplaylist": True,
     }
+    if COOKIE_FILE:
+        ydl_opts["cookiefile"] = COOKIE_FILE
 
     try:
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
