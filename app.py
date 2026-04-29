@@ -45,6 +45,7 @@ def download():
 
     ydl_opts = {
         'format': 'bestaudio/best',
+        'noplaylist': True,
         'outtmpl': os.path.join(temp_dir, '%(title)s.%(ext)s'),
         'ffmpeg_location': FFMPEG_PATH,
         'postprocessors': [
