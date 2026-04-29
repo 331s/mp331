@@ -51,6 +51,11 @@ def download():
         'postprocessor_args': {
             'ffmpegextractaudio': ['-b:a', f'{quality}k'],
         },
+        'extractor_args': {
+            'youtube': {
+                'player_client': ['ios', 'web'],
+            }
+        },
         'quiet': True,
         'no_warnings': True,
     }
