@@ -65,6 +65,7 @@ def download():
 
     temp_dir = tempfile.mkdtemp()
     ydl_opts = {
+        "format": "bv*+ba/b",
         "outtmpl": os.path.join(temp_dir, "%(title)s.%(ext)s"),
         "ffmpeg_location": FFMPEG_PATH,
         "postprocessors": [
