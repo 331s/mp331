@@ -5,7 +5,6 @@ import tempfile
 import glob
 import base64
 
-# FFmpeg yolunu belirle
 def get_ffmpeg_path():
     try:
         import imageio_ffmpeg
@@ -15,7 +14,6 @@ def get_ffmpeg_path():
 
 FFMPEG_PATH = get_ffmpeg_path()
 
-# Cookie dosyasını Render env var'dan oluştur
 COOKIE_FILE = None
 _cookie_b64 = os.environ.get('YT_COOKIES_B64', '')
 if _cookie_b64:
@@ -38,8 +36,7 @@ def download():
     url = request.form.get('url', '').strip()
     quality = request.form.get('quality', '192')
 
-    allowed_qualities = {'128', '192', '256', '320'}
-    if quality not in allowed_qualities:
+    if quality not in {'128', '192', '256', '320'}:
         quality = '192'
     if not url:
         return "Lütfen bir YouTube linki girin.", 400
@@ -87,12 +84,11 @@ def download():
 
         file_path = mp3_files[0]
         safe_title = "".join(c for c in title if c.isalnum() or c in " _-()[]").strip() or "ses"
-        download_name = f"{safe_title}.mp3"
 
         return send_file(
             file_path,
             as_attachment=True,
-            download_name=download_name,
+            download_name=f"{safe_title}.mp3",
             mimetype='audio/mpeg'
         )
 
