@@ -13,7 +13,7 @@
 
 <br>
 
-![MP404 Preview](https://i.imgur.com/UKqE9JK.png)
+![MP331 Preview](https://i.imgur.com/UKqE9JK.png)
 
 <br>
 
