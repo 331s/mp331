@@ -37,6 +37,9 @@ def base_cmd():
         "--js-runtimes", f"node:{NODE_PATH}" if NODE_PATH else "node",
         # EJS script'i GitHub'dan indir (n challenge ve format sorununu çözer)
         "--no-warnings",
+        "--concurrent-fragments", "4",   # paralel fragment indirme
+        "--no-part",                      # temp dosya oluşturma
+        "--buffer-size", "16K",
     ]
     if COOKIE_FILE:
         cmd += ["--cookies", COOKIE_FILE]
