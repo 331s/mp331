@@ -36,7 +36,6 @@ def base_cmd():
         # Node.js varsa JS runtime olarak kullan
         "--js-runtimes", f"node:{NODE_PATH}" if NODE_PATH else "node",
         # EJS script'i GitHub'dan indir (n challenge ve format sorununu çözer)
-        "--remote-components", "ejs:github",
         "--no-warnings",
     ]
     if COOKIE_FILE:
@@ -88,6 +87,12 @@ def download():
     title = os.path.splitext(os.path.basename(mp3_files[0]))[0]
     safe  = "".join(c for c in title if c.isalnum() or c in " _-()[]").strip() or "ses"
     return send_file(mp3_files[0], as_attachment=True, download_name=f"{safe}.mp3", mimetype="audio/mpeg")
+
+import traceback
+
+@app.errorhandler(500)
+def internal_error(e):
+    return f"<pre>500 Error:\n{traceback.format_exc()}</pre>", 500
 
 if __name__ == "__main__":
     app.run(debug=True)
