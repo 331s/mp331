@@ -1,5 +1,5 @@
-from flask import Flask, render_template, request, send_file, jsonify
-import os, tempfile, glob, base64, subprocess, sys, shutil
+from flask import Flask, render_template, request, Response, jsonify, stream_with_context
+import os, tempfile, base64, subprocess, sys, shutil, json
 
 def get_ffmpeg_path():
     try:
@@ -12,8 +12,6 @@ FFMPEG_PATH = get_ffmpeg_path()
 YTDLP_PATH  = os.path.join(os.path.dirname(sys.executable), "yt-dlp")
 if not os.path.exists(YTDLP_PATH):
     YTDLP_PATH = "yt-dlp"
-
-# Node.js yolunu bul
 NODE_PATH = shutil.which("node") or shutil.which("nodejs") or ""
 
 COOKIE_FILE = None
@@ -29,21 +27,14 @@ if _b64:
 
 app = Flask(__name__)
 
-def base_cmd():
-    cmd = [
-        YTDLP_PATH,
-        "--no-playlist",
-        # Node.js varsa JS runtime olarak kullan
+def base_args():
+    args = [
         "--js-runtimes", f"node:{NODE_PATH}" if NODE_PATH else "node",
-        # EJS script'i GitHub'dan indir (n challenge ve format sorununu çözer)
-        "--no-warnings",
-        "--concurrent-fragments", "4",   # paralel fragment indirme
-        "--no-part",                      # temp dosya oluşturma
-        "--buffer-size", "16K",
+        "--no-warnings", "--no-playlist",
     ]
     if COOKIE_FILE:
-        cmd += ["--cookies", COOKIE_FILE]
-    return cmd
+        args += ["--cookies", COOKIE_FILE]
+    return args
 
 @app.route("/")
 def index():
@@ -52,62 +43,88 @@ def index():
 @app.route("/version")
 def version():
     r = subprocess.run([YTDLP_PATH, "--version"], capture_output=True, text=True)
-    return jsonify({
-        "yt_dlp": r.stdout.strip(),
-        "ffmpeg": FFMPEG_PATH,
-        "node": NODE_PATH,
-        "cookie": COOKIE_FILE is not None,
-    })
+    return jsonify({"yt_dlp": r.stdout.strip(), "node": NODE_PATH, "cookie": COOKIE_FILE is not None})
 
+@app.route("/info", methods=["POST"])
+def info():
+    """Video bilgisini ve formatları çek — hızlı, download yok"""
+    url = request.form.get("url", "").strip()
+    if not url:
+        return jsonify({"error": "URL gerekli"}), 400
 
-@app.route("/test")
-def test():
-    import subprocess
-    cmd = [YTDLP_PATH, "--js-runtimes", f"node:{NODE_PATH}" if NODE_PATH else "node",
-           "--no-warnings", "-x", "--audio-format", "mp3",
-           "--simulate", "https://www.youtube.com/watch?v=dQw4w9WgXcQ"]
-    if COOKIE_FILE:
-        cmd += ["--cookies", COOKIE_FILE]
-    r = subprocess.run(cmd, capture_output=True, text=True, timeout=60)
-    return f"<pre>CMD: {' '.join(cmd)}\n\nSTDOUT:\n{r.stdout}\n\nSTDERR:\n{r.stderr}\n\nRETURNCODE: {r.returncode}</pre>"
+    cmd = [YTDLP_PATH] + base_args() + ["-J", url]
+    r = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
+    if r.returncode != 0:
+        return jsonify({"error": r.stderr[:300]}), 400
+    try:
+        data = json.loads(r.stdout)
+        return jsonify({
+            "title": data.get("title", ""),
+            "duration": data.get("duration", 0),
+            "thumbnail": data.get("thumbnail", ""),
+        })
+    except Exception as e:
+        return jsonify({"error": str(e)}), 400
 
 @app.route("/download", methods=["POST"])
 def download():
+    """Doğrudan stream: sunucuya kaydetmeden client'a gönder"""
     url     = request.form.get("url", "").strip()
     quality = request.form.get("quality", "192")
     if quality not in {"128", "192", "256", "320"}:
         quality = "192"
     if not url:
-        return "Lutfen bir YouTube linki girin.", 400
+        return "URL gerekli", 400
 
-    temp_dir = tempfile.mkdtemp()
-    out_tmpl = os.path.join(temp_dir, "%(title)s.%(ext)s")
+    # yt-dlp'yi ffmpeg pipeline ile çalıştır, stdout'a yaz
+    cmd = [
+        YTDLP_PATH,
+        "-f", "bestaudio/best",
+        "--no-playlist",
+        "--js-runtimes", f"node:{NODE_PATH}" if NODE_PATH else "node",
+        "--no-warnings",
+        "--concurrent-fragments", "4",
+        "-o", "-",          # stdout'a yaz
+        "--quiet",
+    ]
+    if COOKIE_FILE:
+        cmd += ["--cookies", COOKIE_FILE]
+    cmd.append(url)
 
-    cmd = base_cmd() + [
-        "--extract-audio",
-        "--audio-format", "mp3",
-        "--audio-quality", f"{quality}k",
-        "--ffmpeg-location", FFMPEG_PATH,
-        "-o", out_tmpl,
-        url,
+    # ffmpeg ile mp3'e dönüştür, stdout'a yaz
+    ffmpeg_cmd = [
+        FFMPEG_PATH,
+        "-i", "pipe:0",
+        "-vn",
+        "-ar", "44100",
+        "-ac", "2",
+        "-b:a", f"{quality}k",
+        "-f", "mp3",
+        "pipe:1",
     ]
 
-    result = subprocess.run(cmd, capture_output=True, text=True, timeout=300)
+    def generate():
+        yt = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
+        ff = subprocess.Popen(ffmpeg_cmd, stdin=yt.stdout, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
+        yt.stdout.close()
+        try:
+            while True:
+                chunk = ff.stdout.read(65536)
+                if not chunk:
+                    break
+                yield chunk
+        finally:
+            ff.wait()
+            yt.wait()
 
-    mp3_files = glob.glob(os.path.join(temp_dir, "*.mp3"))
-    if not mp3_files:
-        err = result.stderr or result.stdout
-        return f"Hata: {err[:800]}", 400
-
-    title = os.path.splitext(os.path.basename(mp3_files[0]))[0]
-    safe  = "".join(c for c in title if c.isalnum() or c in " _-()[]").strip() or "ses"
-    return send_file(mp3_files[0], as_attachment=True, download_name=f"{safe}.mp3", mimetype="audio/mpeg")
-
-import traceback
-
-@app.errorhandler(500)
-def internal_error(e):
-    return f"<pre>500 Error:\n{traceback.format_exc()}</pre>", 500
+    return Response(
+        stream_with_context(generate()),
+        mimetype="audio/mpeg",
+        headers={
+            "Content-Disposition": "attachment; filename=audio.mp3",
+            "X-Accel-Buffering": "no",
+        }
+    )
 
 if __name__ == "__main__":
     app.run(debug=True)
