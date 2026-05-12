@@ -28,13 +28,14 @@ if _b64:
 app = Flask(__name__)
 
 def base_args():
-    args = [
-        "--js-runtimes", f"node:{NODE_PATH}" if NODE_PATH else "node",
-        "--no-warnings", "--no-playlist",
-    ]
+    args = ["--js-runtimes", f"node:{NODE_PATH}" if NODE_PATH else "node",
+            "--no-warnings", "--no-playlist"]
     if COOKIE_FILE:
         args += ["--cookies", COOKIE_FILE]
     return args
+
+def safe_filename(title):
+    return "".join(c for c in title if c.isalnum() or c in " _-()[]").strip() or "audio"
 
 @app.route("/")
 def index():
@@ -47,28 +48,21 @@ def version():
 
 @app.route("/info", methods=["POST"])
 def info():
-    """Video bilgisini ve formatları çek — hızlı, download yok"""
     url = request.form.get("url", "").strip()
     if not url:
         return jsonify({"error": "URL gerekli"}), 400
-
     cmd = [YTDLP_PATH] + base_args() + ["-J", url]
     r = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
     if r.returncode != 0:
         return jsonify({"error": r.stderr[:300]}), 400
     try:
         data = json.loads(r.stdout)
-        return jsonify({
-            "title": data.get("title", ""),
-            "duration": data.get("duration", 0),
-            "thumbnail": data.get("thumbnail", ""),
-        })
+        return jsonify({"title": data.get("title", ""), "duration": data.get("duration", 0)})
     except Exception as e:
         return jsonify({"error": str(e)}), 400
 
 @app.route("/download", methods=["POST"])
 def download():
-    """Doğrudan stream: sunucuya kaydetmeden client'a gönder"""
     url     = request.form.get("url", "").strip()
     quality = request.form.get("quality", "192")
     if quality not in {"128", "192", "256", "320"}:
@@ -76,36 +70,53 @@ def download():
     if not url:
         return "URL gerekli", 400
 
-    # yt-dlp'yi ffmpeg pipeline ile çalıştır, stdout'a yaz
-    cmd = [
-        YTDLP_PATH,
-        "-f", "bestaudio/best",
+    # Önce başlığı hızlıca çek
+    title_r = subprocess.run(
+        [YTDLP_PATH] + base_args() + ["--print", "title", url],
+        capture_output=True, text=True, timeout=15
+    )
+    title = safe_filename(title_r.stdout.strip()) if title_r.returncode == 0 else "audio"
+
+    # yt-dlp → ffmpeg → client pipe
+    yt_cmd = [
+        YTDLP_PATH, "-f", "bestaudio/best",
         "--no-playlist",
         "--js-runtimes", f"node:{NODE_PATH}" if NODE_PATH else "node",
-        "--no-warnings",
-        "--concurrent-fragments", "4",
-        "-o", "-",          # stdout'a yaz
-        "--quiet",
+        "--no-warnings", "--concurrent-fragments", "4",
+        "-o", "-", "--quiet",
     ]
     if COOKIE_FILE:
-        cmd += ["--cookies", COOKIE_FILE]
-    cmd.append(url)
+        yt_cmd += ["--cookies", COOKIE_FILE]
+    yt_cmd.append(url)
 
-    # ffmpeg ile mp3'e dönüştür, stdout'a yaz
-    ffmpeg_cmd = [
-        FFMPEG_PATH,
-        "-i", "pipe:0",
-        "-vn",
-        "-ar", "44100",
-        "-ac", "2",
+    # Metadata'yı yt-dlp'den çek
+    meta_r = subprocess.run(
+        [YTDLP_PATH] + base_args() + [
+            "--print", "%(title)s|||%(uploader)s|||%(upload_date)s",
+            url
+        ],
+        capture_output=True, text=True, timeout=15
+    )
+    meta_parts = (meta_r.stdout.strip().split("|||") + ["", "", ""])[:3]
+    track_title = meta_parts[0] or title
+    artist      = meta_parts[1] or ""
+    year        = meta_parts[2][:4] if len(meta_parts[2]) >= 4 else ""
+
+    ff_cmd = [
+        FFMPEG_PATH, "-i", "pipe:0", "-vn",
+        "-ar", "44100", "-ac", "2",
         "-b:a", f"{quality}k",
-        "-f", "mp3",
-        "pipe:1",
+        "-metadata", f"title={track_title}",
+        "-metadata", f"artist={artist}",
+        "-metadata", f"date={year}",
+        "-metadata", f"comment=youtube",
+        "-id3v2_version", "3",
+        "-f", "mp3", "pipe:1",
     ]
 
     def generate():
-        yt = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
-        ff = subprocess.Popen(ffmpeg_cmd, stdin=yt.stdout, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
+        yt = subprocess.Popen(yt_cmd, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
+        ff = subprocess.Popen(ff_cmd, stdin=yt.stdout, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
         yt.stdout.close()
         try:
             while True:
@@ -121,7 +132,7 @@ def download():
         stream_with_context(generate()),
         mimetype="audio/mpeg",
         headers={
-            "Content-Disposition": "attachment; filename=audio.mp3",
+            "Content-Disposition": f'attachment; filename="{title}.mp3"',
             "X-Accel-Buffering": "no",
         }
     )
