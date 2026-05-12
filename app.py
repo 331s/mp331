@@ -56,6 +56,18 @@ def version():
         "cookie": COOKIE_FILE is not None,
     })
 
+
+@app.route("/test")
+def test():
+    import subprocess
+    cmd = [YTDLP_PATH, "--js-runtimes", f"node:{NODE_PATH}" if NODE_PATH else "node",
+           "--no-warnings", "-x", "--audio-format", "mp3",
+           "--simulate", "https://www.youtube.com/watch?v=dQw4w9WgXcQ"]
+    if COOKIE_FILE:
+        cmd += ["--cookies", COOKIE_FILE]
+    r = subprocess.run(cmd, capture_output=True, text=True, timeout=60)
+    return f"<pre>CMD: {' '.join(cmd)}\n\nSTDOUT:\n{r.stdout}\n\nSTDERR:\n{r.stderr}\n\nRETURNCODE: {r.returncode}</pre>"
+
 @app.route("/download", methods=["POST"])
 def download():
     url     = request.form.get("url", "").strip()
